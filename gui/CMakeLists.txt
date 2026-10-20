@@ -95,7 +95,7 @@ add_executable(chiaki WIN32
 		${SOURCE_FILES}
 )
 target_include_directories(chiaki PRIVATE include "${CMAKE_SOURCE_DIR}/third-party/nr-sdk/fidelityfx/include")
-target_link_libraries(chiaki vulkan-1 shaderc_shared wintrust crypt32)
+target_link_libraries(chiaki vulkan-1 shaderc_shared)
 
 add_library(placebo-libav-impl src/libav_impl.c)
 target_link_libraries(placebo-libav-impl PkgConfig::LIBPLACEBO FFMPEG::avcodec FFMPEG::avutil FFMPEG::avformat)

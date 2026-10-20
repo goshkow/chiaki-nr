@@ -8,4 +8,6 @@
 
 Публичная сборка: scripts/package-nr.py берёт runtime только из MSYS2 и собственных сборочных DLL, проверяет зависимости PE и исключает закрытые NVIDIA runtime. Исходники SDK с лицензиями - third-party/nr-sdk. CI Windows x64 - .github/workflows/nr-portable.yml; tag v* создаёт релиз с portable и архивом соответствующих исходников. README.md русский, README.upstream.md сохраняет оригинал.
 
+NR принимает только известный SHA256 локально проверенной DLL или runtime с проверенной Windows-подписью NVIDIA Corporation. Подпись не гарантирует совместимость, ошибка инициализации оставляет обычный стриминг. Для portable используется QT_QPA_PLATFORM=windows; offscreen не входит в публичную упаковку.
+
 GitHub: git по SSH, коммиты goshkow <goshkow@users.noreply.github.com>. История upstream и лицензии сохраняются; новые коммиты без дополнительных подписей авторства.

@@ -14,6 +14,9 @@
 #include <QDebug>
 #include <QMutex>
 #include <windows.h>
+#include <wintrust.h>
+#include <softpub.h>
+#include <wincrypt.h>
 #include <shaderc/shaderc.hpp>
 #include <nvsdk_ngx_vk.h>
 #include <nvsdk_ngx_helpers_vk.h>
@@ -92,6 +95,17 @@ struct Api {
         return true;
     }
 };
+bool trustedNrRuntime(const QString &path){
+    QFile file(path);if(!file.open(QIODevice::ReadOnly))return false;
+    QCryptographicHash hash(QCryptographicHash::Sha256);if(!hash.addData(&file))return false;
+    if(hash.result().toHex().toUpper()=="E67DEE209320CDAFE0E93E45675D7AA34323A53ACC57A72B2E40A181581C989A")return true;
+    // неизвестные патчи не загружаем; другой runtime должен иметь подпись NVIDIA.
+    WINTRUST_FILE_INFO info{};info.cbStruct=sizeof(info);info.pcwszFilePath=reinterpret_cast<const wchar_t*>(path.utf16());
+    WINTRUST_DATA trust{};trust.cbStruct=sizeof(trust);trust.dwUIChoice=WTD_UI_NONE;trust.fdwRevocationChecks=WTD_REVOKE_NONE;trust.dwUnionChoice=WTD_CHOICE_FILE;trust.pFile=&info;trust.dwStateAction=WTD_STATEACTION_VERIFY;trust.dwProvFlags=WTD_CACHE_ONLY_URL_RETRIEVAL;
+    GUID policy=WINTRUST_ACTION_GENERIC_VERIFY_V2;LONG result=WinVerifyTrust(nullptr,&policy,&trust);bool valid=false;
+    if(result==ERROR_SUCCESS){auto data=WTHelperProvDataFromStateData(trust.hWVTStateData);auto signer=data?WTHelperGetProvSignerFromChain(data,0,FALSE,0):nullptr;if(signer&&signer->csCertChain){wchar_t name[256]{};CertGetNameStringW(signer->pasCertChain[0].pCert,CERT_NAME_SIMPLE_DISPLAY_TYPE,0,nullptr,name,256);valid=QString::fromWCharArray(name).compare("NVIDIA Corporation",Qt::CaseInsensitive)==0;}}
+    trust.dwStateAction=WTD_STATEACTION_CLOSE;WinVerifyTrust(nullptr,&policy,&trust);return valid;
+}
 bool hasRtxVulkan(){
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_1;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&app;
@@ -517,8 +531,7 @@ void main(){ivec2 p=ivec2(gl_GlobalInvocationID.xy),dst=imageSize(finalColor),sr
         std::array<VkDescriptorImageInfo,3> imageInfos{};std::array<VkWriteDescriptorSet,3> writes{};
             QString dir=QCoreApplication::applicationDirPath();
             if(!nrForwarder){
-                QFile runtime(dir+"/nvngx_dlssnr.dll");
-                if(!runtime.open(QIODevice::ReadOnly)||QCryptographicHash::hash(runtime.readAll(),QCryptographicHash::Sha256).toHex().toUpper()!="E67DEE209320CDAFE0E93E45675D7AA34323A53ACC57A72B2E40A181581C989A")throw std::runtime_error("NR runtime SHA256 mismatch");
+                if(!trustedNrRuntime(dir+"/nvngx_dlssnr.dll"))throw std::runtime_error("Неизвестная или неподписанная библиотека NR");
                 nrForwarder=LoadLibraryExW(reinterpret_cast<const wchar_t*>((dir+"/chiaki_nvngx.dll").utf16()),nullptr,LOAD_WITH_ALTERED_SEARCH_PATH);
                 if(!nrForwarder)throw std::runtime_error("native NR forwarder unavailable");
                 nrInit=reinterpret_cast<NrInit>(GetProcAddress(nrForwarder,"dlssnr_vk_init"));

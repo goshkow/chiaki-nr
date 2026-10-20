@@ -127,20 +127,15 @@ int real_main(int argc, char *argv[])
 	QtWebEngineQuick::initialize();
 #endif
 	QApplication app(argc, argv);
-    // portable не читает подключения из установленного Chiaki.
-    if(QFileInfo::exists(QCoreApplication::applicationDirPath()+"/portable.txt")){
-        const QString path=QCoreApplication::applicationDirPath()+"/config";
-        if(!QDir().mkpath(path)){fprintf(stderr,"Не удалось создать каталог настроек portable.\n");return 1;}
-        QCoreApplication::setOrganizationName("ChiakiNR");
-        QCoreApplication::setApplicationName("ChiakiNR");
-        QSettings::setDefaultFormat(QSettings::IniFormat);
-        QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,path);
-        QSettings::setPath(QSettings::IniFormat,QSettings::SystemScope,path+"/defaults");
-    }
+    // используем хранилище оригинального Chiaki, включая профили и регистрацию.
+    // portable относится к установке программы, а не к отдельной базе настроек.
     if(app.arguments().contains("--portable-check")){
-        QSettings settings;settings.setValue("portable/check",true);settings.sync();
-        fprintf(stdout,"%s\n",settings.fileName().toUtf8().constData());
-        return settings.format()==QSettings::IniFormat&&settings.status()==QSettings::NoError?0:2;
+        QSettings settings;
+        const bool compatible=settings.format()==QSettings::NativeFormat
+            &&QCoreApplication::organizationName()=="Chiaki"
+            &&QCoreApplication::applicationName()=="Chiaki";
+        fprintf(stdout,"Shared Chiaki settings: %s\n",compatible?"true":"false");
+        return compatible&&settings.status()==QSettings::NoError?0:2;
     }
     if(app.arguments().contains("--nr-capabilities")){
         NvidiaVideo video;

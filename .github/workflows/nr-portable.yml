@@ -56,11 +56,6 @@ jobs:
           $cap=Join-Path $env:GITHUB_WORKSPACE 'nr-capabilities.txt'
           $p=Start-Process -FilePath $exe -ArgumentList '--nr-capabilities' -RedirectStandardOutput $cap -Wait -PassThru
           if($p.ExitCode -ne 0 -or !(Select-String -LiteralPath $cap -SimpleMatch 'NR available: false')){throw 'NR must be unavailable without runtime'}
-          $config=Join-Path $pwd 'dist/Chiaki-NR/config'
-          if(!(Test-Path -LiteralPath $config)){throw 'No portable config'}
-          $expected=[IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE 'dist/Chiaki-NR/config'))
-          if((Resolve-Path -LiteralPath $config).Path -ne $expected){throw 'Unexpected config path'}
-          Remove-Item -LiteralPath $config -Recurse -Force
       - name: Упаковать
         env:
           RELEASE_REF: ${{ github.ref_name }}

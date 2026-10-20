@@ -14,7 +14,7 @@ python scripts/package-nr.py --prefix /ucrt64 --build build --output dist/Chiaki
 
 Проверки:
 
-- `QT_QPA_PLATFORM=windows chiaki.exe --portable-check` - запись настроек рядом с portable, без подключения к консоли. В публичном архиве Windows-плагин Qt; offscreen в него не входит.
+- `QT_QPA_PLATFORM=windows chiaki.exe --portable-check` - проверка совместимого общего хранилища Chiaki без записи и подключения к консоли. В публичном архиве Windows-плагин Qt; offscreen в него не входит.
 - `QT_QPA_PLATFORM=windows chiaki.exe --nvidia-qml-check` - панель Insert, колесо, ограничения размеров и независимость настроек. Проводить на тестовой копии.
 - `QT_QPA_PLATFORM=offscreen chiaki.exe --nvidia-self-test report.json` - GPU-тест; нужен NVIDIA RTX и совместимые runtime для внутренних SR/NR-проверок. Не запускается на обычном GitHub runner без GPU.
 

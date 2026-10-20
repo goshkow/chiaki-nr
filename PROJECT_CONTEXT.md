@@ -4,7 +4,7 @@
 
 Стек: C++/Qt Quick, FFmpeg, libplacebo/Vulkan, SDL2, MSYS2 UCRT64/CMake. Основной видеопуть - gui/src/qmlmainwindow.cpp, обработка - gui/src/nvidiavideo.cpp, панель Insert - gui/src/qml/Main.qml. NR вызывается через Vulkan feature 18 и caller shim chiaki_nvngx.dll. Закрытая пользовательская nvngx_dlssnr.dll отдельно; право её публикации не подтверждено. SR DLSS/FSR не доступны в меню. FG - собственная экспериментальная optical-flow интерполяция, не NVIDIA MFG.
 
-Без portable.txt сохраняется совместимость с HKCU/Software/Chiaki/Chiaki. При portable.txt QSettings использует INI в config/ChiakiNR рядом с программой. Пользовательские регистрации никогда не включать в публичные файлы. Тесты используют изолированные настройки. Существующая установка вне репозитория не заменяется при подготовке публичной сборки.
+С v0.1.3 все обычные запуски используют исходное хранилище HKCU/Software/Chiaki/Chiaki через QSettings NativeFormat. Именованные профили и pl_render_params совместимы с оригиналом. portable.txt больше не меняет backend. Старый config v0.1.2 сохраняется, но не читается автоматически. Пользовательские регистрации не входят в публичные файлы. Тесты QML/GPU используют отдельное имя организации; portable-check только проверяет backend без записи.
 
 Публичная сборка: scripts/package-nr.py берёт runtime только из MSYS2 и собственных сборочных DLL, проверяет зависимости PE и исключает закрытые NVIDIA runtime. Заголовки AMD с MIT-лицензией - third-party/nr-sdk. Для NGX - собственный gui/include/ngx_abi.h; NVIDIA SDK в актуальном дереве не поставляется. CI Windows x64 - .github/workflows/nr-portable.yml; tag v* создаёт релиз с portable и архивом соответствующих исходников. README.md русский, README.upstream.md сохраняет оригинал.
 

@@ -931,18 +931,13 @@ DialogView {
 
                     C.ComboBox {
                         Layout.preferredWidth: 520
-                        model: [qsTr("Fast"), qsTr("Default"), qsTr("High Quality"), qsTr("High Quality + Spatial Upscaling"), qsTr("High Quality + Advanced Spatial Upscaling"), qsTr("Custom")]
-                        currentIndex: Chiaki.settings.videoPreset
+                        objectName: "renderPresetSelector"
+                        model: [qsTr("Fast"), qsTr("Default"), qsTr("High Quality"), qsTr("Custom")]
+                        currentIndex: Chiaki.window.videoPreset === ChiakiWindow.VideoPreset.Custom ? 3 : Number(Chiaki.window.videoPreset)
                         onActivated: (index) => {
-                            Chiaki.settings.videoPreset = index;
-                            switch (index) {
-                            case 0: Chiaki.window.videoPreset = ChiakiWindow.VideoPreset.Fast; break;
-                            case 1: Chiaki.window.videoPreset = ChiakiWindow.VideoPreset.Default; break;
-                            case 2: Chiaki.window.videoPreset = ChiakiWindow.VideoPreset.HighQuality; break;
-                            case 3: Chiaki.window.videoPreset = ChiakiWindow.VideoPreset.HighQualitySpatial; break;
-                            case 4: Chiaki.window.videoPreset = ChiakiWindow.VideoPreset.HighQualityAdvancedSpatial; break;
-                            case 5: Chiaki.window.videoPreset = ChiakiWindow.VideoPreset.Custom; break;
-                            }
+                            const value=index===3?5:index;
+                            Chiaki.settings.videoPreset=value;
+                            Chiaki.window.videoPreset=value;
                         }
                     }
 
@@ -950,6 +945,43 @@ DialogView {
                         Layout.alignment: Qt.AlignRight
                         text: qsTr("(High Quality)")
                     }
+
+                    Label {
+                        Layout.alignment: Qt.AlignRight
+                        text: qsTr("Upscaling:")
+                    }
+
+                    C.ComboBox {
+                        objectName: "upscalingSelector"
+                        Layout.preferredWidth: 520
+                        model: ["Обычное масштабирование", "Spatial Upscaling", "Advanced Spatial Upscaling"]
+                        currentIndex: Chiaki.window.upscalingMode
+                        onActivated: index => Chiaki.window.upscalingMode=index
+                    }
+                    Label { text: "(Пространственное масштабирование)"; Layout.alignment: Qt.AlignRight }
+                    Label { text: "Neural Rendering:"; Layout.alignment: Qt.AlignRight }
+                    C.CheckBox { text: "DLSS 5 · независимо от апскейлера"; checked: Chiaki.window.nvidia.neural; onToggled: Chiaki.window.nvidia.neural=checked }
+                    Label { }
+                    Label { text: "Генерация кадров:"; Layout.alignment: Qt.AlignRight }
+                    C.ComboBox { model: ["Выключено", "AMD FSR 3.1 · 2× (экспериментально)"]; currentIndex: Chiaki.window.nvidia.frameGeneration?1:0; onActivated: index => Chiaki.window.nvidia.frameGeneration=index===1; Layout.preferredWidth: 520 }
+                    Label { text: "(Выключено)" }
+
+
+                    Label { text: "Доля изображения NR:"; Layout.alignment: Qt.AlignRight; visible: Chiaki.window.nvidia.neural }
+                    C.Slider {
+                        Layout.preferredWidth: 520; from: 0; to: 1; stepSize: 0.05
+                        value: Chiaki.window.nvidia.neuralBlend
+                        onMoved: Chiaki.window.nvidia.neuralBlend=value
+                        visible: Chiaki.window.nvidia.neural
+                    }
+                    Label { text: Math.round(Chiaki.window.nvidia.neuralBlend*100)+"%"; visible: Chiaki.window.nvidia.neural }
+
+                    Label { }
+                    Label {
+                        Layout.preferredWidth: 520; wrapMode: Text.WordWrap
+                        text: "Render Preset задаёт качество обработки видео. Upscaling выбирается независимо и масштабирует поток до размера окна или экрана. Neural Rendering включается независимо; переключение также доступно по Insert."
+                    }
+                    Label { }
 
                     Label {
                         Layout.alignment: Qt.AlignRight

@@ -2,6 +2,7 @@
 
 #include "streamsession.h"
 #include "settings.h"
+#include "nvidiavideo.h"
 
 #include <QMutex>
 #include <QAtomicInteger>
@@ -56,6 +57,9 @@ class DeferredSwapThread;
 class QmlMainWindow : public QWindow
 {
     Q_OBJECT
+    Q_PROPERTY(QObject* nvidia READ nvidia CONSTANT)
+    Q_PROPERTY(double videoSharpness READ videoSharpness WRITE setVideoSharpness NOTIFY videoSharpnessChanged)
+    Q_PROPERTY(int upscalingMode READ upscalingMode WRITE setUpscalingMode NOTIFY upscalingModeChanged)
     Q_PROPERTY(bool hasVideo READ hasVideo NOTIFY hasVideoChanged)
     Q_PROPERTY(int droppedFrames READ droppedFrames NOTIFY droppedFramesChanged)
     Q_PROPERTY(bool keepVideo READ keepVideo WRITE setKeepVideo NOTIFY keepVideoChanged)
@@ -69,6 +73,8 @@ class QmlMainWindow : public QWindow
     Q_PROPERTY(double pendingFrameAge READ pendingFrameAge NOTIFY pendingFrameAgeChanged)
 
 public:
+    QObject *nvidia() { return &nvidia_processor; }
+    bool validateQml();
     enum class UpdateRequestReason {
         Unknown,
         SceneChanged,
@@ -143,6 +149,10 @@ public:
 
     QmlBackend *getBackend();
 
+    double videoSharpness() const;
+    void setVideoSharpness(double value);
+    int upscalingMode() const;
+    void setUpscalingMode(int mode);
     VideoPreset videoPreset() const;
     void setVideoPreset(VideoPreset mode);
 
@@ -170,12 +180,15 @@ public slots:
     AVBufferRef *vulkanHwDeviceCtx();
 
 signals:
+    void nvidiaMenuRequested();
     void hasVideoChanged();
     void droppedFramesChanged();
     void keepVideoChanged();
     void videoModeChanged();
     void zoomFactorChanged();
     void videoPresetChanged();
+    void videoSharpnessChanged();
+    void upscalingModeChanged();
     void menuRequested();
     void directStreamChanged();
     void queueDepthAverageChanged();
@@ -184,6 +197,7 @@ signals:
     void statsOverlayActiveChanged();
 
 private:
+    NvidiaVideo nvidia_processor;
     friend class BufferedPlaybackPacerThread;
     friend class DeferredPresentPacerThread;
     friend class DeferredSwapThread;
@@ -312,6 +326,7 @@ private:
     bool going_full = false;
     VideoMode video_mode = VideoMode::Normal;
     float zoom_factor = 0;
+    QAtomicInt spatial_upscaling_mode{0};
     VideoPreset video_preset = VideoPreset::HighQuality;
     Settings *settings = {};
 
@@ -452,6 +467,9 @@ private:
     VkPhysicalDeviceDriverProperties vk_device_driver_props = {};
     pl_options renderparams_opts = {};
     bool renderparams_changed = false;
+    QAtomicInt video_sharpness{0};
+    int active_sharpness=-1;
+    const struct pl_hook *sharpness_hook=nullptr;
     const struct pl_hook *fsr_hook = nullptr;
     const struct pl_hook *fsrcnnx_hook_8 = nullptr;
     const struct pl_hook *fsrcnnx_hook_16 = nullptr;

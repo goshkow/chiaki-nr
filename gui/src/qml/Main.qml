@@ -13,6 +13,121 @@ Item {
     property bool useSeparateStreamSettingsWindows: false
     Material.theme: Material.Dark
     Material.accent: "#00a7ff"
+    Popup {
+        id: nvidiaMenu
+        objectName: "nvidiaMenu"
+        x: 24; y: 32
+        width: Math.max(1, Math.min(540, root.width - 16))
+        height: Math.max(1, Math.min(850, root.height - 16))
+        padding: 18
+        modal: true; focus: true
+        closePolicy: Popup.CloseOnEscape
+        function constrain() { x=Math.max(8,Math.min(x,root.width-width-8)); y=Math.max(8,Math.min(y,root.height-height-8)); }
+        onWidthChanged: constrain()
+        onHeightChanged: constrain()
+        onAboutToShow: { constrain(); root.grabInput(contentItem); Chiaki.window.requestOverlayUpdate(); }
+        onClosed: { root.releaseInput(); Chiaki.window.requestOverlayUpdate(); }
+        background: Rectangle { color: "#ee17222d"; radius: 18; border.width: 1; border.color: "#425d72" }
+        contentItem: ColumnLayout {
+            spacing: 12
+            Item {
+                Layout.fillWidth: true; Layout.preferredHeight: 50
+                Column {
+                    Label { text: "Обработка видео"; font.pixelSize: 24; font.bold: true; color: "#eff8ff" }
+                    Label { text: "Перетащите заголовок · Insert — закрыть"; font.pixelSize: 12; color: "#9aafc1" }
+                }
+                MouseArea {
+                    anchors.fill: parent; cursorShape: Qt.SizeAllCursor
+                    property point origin
+                    onPressed: mouse => { origin=mapToItem(root,mouse.x,mouse.y); }
+                    onPositionChanged: mouse => { if(pressed){ const next=mapToItem(root,mouse.x,mouse.y); nvidiaMenu.x+=next.x-origin.x; nvidiaMenu.y+=next.y-origin.y; nvidiaMenu.constrain(); origin=next; } }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#425d72" }
+            ScrollView {
+                id: videoControls
+                objectName: "videoControls"
+                Layout.fillWidth: true; Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ColumnLayout {
+                    width: videoControls.availableWidth
+                    spacing: 10
+                    Label { text: "Схема выбранного режима"; font.bold: true; color: "#81d8ff" }
+                    Repeater {
+                        model: ["PS5 → декодирование GPU · исходное разрешение", "Оценка движения + нейтральная глубина", Chiaki.window.nvidia.neural && Chiaki.window.nvidia.neuralBefore ? "Модель NR получает исходное разрешение; поправка сохранена" : "Оригинал сохранён", ["Обычное масштабирование", "Spatial", "Advanced Spatial"][Chiaki.window.upscalingMode] + " → разрешение области вывода", Chiaki.window.nvidia.enabled ? "Резкость NVIDIA NIS (если включена)" : "Резкость AMD RCAS (если включена)", Chiaki.window.nvidia.neural ? (Chiaki.window.nvidia.neuralBefore ? "Поправка ранее вычисленного NR → полная картинка" : "Модель NR получает апскейл + резкость → поправка к полной картинке") : "Neural Rendering выключен", Chiaki.window.nvidia.frameGeneration ? "Optical Flow → промежуточный → исходный кадр, пауза 1–8,3 мс" : "Генерация кадров выключена", "Интерфейс → экран"]
+                        delegate: Rectangle {
+                            required property string modelData
+                            Layout.fillWidth: true; implicitHeight: stageLabel.implicitHeight+16
+                            radius: 8; color: "#243544"
+                            Label { id: stageLabel; anchors.fill: parent; anchors.margins: 8; text: modelData; wrapMode: Text.WordWrap; font.pixelSize: 13 }
+                        }
+                    }
+                    Label { text: "Render Preset"; font.bold: true }
+                    ComboBox {
+                        model: ["Fast", "Default", "High Quality", "Custom"]
+                        currentIndex: Chiaki.window.videoPreset===ChiakiWindow.VideoPreset.Custom?3:Number(Chiaki.window.videoPreset)
+                        onActivated: index => { const value=index===3?5:index; Chiaki.settings.videoPreset=value; Chiaki.window.videoPreset=value; }
+                        Layout.fillWidth: true
+                    }
+                    Label { text: "Апскейлер · исходный поток → размер окна"; font.bold: true }
+                    Label { text: "Исходный поток масштабируется до размера окна или экрана выбранным пространственным алгоритмом."; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aafc1"; font.pixelSize: 12 }
+                    ComboBox { model: ["Обычное масштабирование", "Spatial Upscaling", "Advanced Spatial Upscaling"]; currentIndex: Chiaki.window.upscalingMode; onActivated: index => Chiaki.window.upscalingMode=index; Layout.fillWidth: true }
+                    Switch { enabled: Chiaki.window.nvidia.neuralAvailable; text: "DLSS 5 Neural Rendering"; checked: Chiaki.window.nvidia.neural; onToggled: Chiaki.window.nvidia.neural=checked }
+                    Label { text: Chiaki.window.nvidia.neuralAvailabilityReason; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12; color: "#9aafc1" }
+                    Label { text: "Смешивание результата NR: " + Math.round(Chiaki.window.nvidia.neuralBlend*100) + "%" }
+                    Slider { from: 0; to: 1; stepSize: 0.05; value: Chiaki.window.nvidia.neuralBlend; enabled: Chiaki.window.nvidia.neural; onMoved: Chiaki.window.nvidia.neuralBlend=value; Layout.fillWidth: true }
+                    Label { text: "NR накладывается после апскейлера и резкости. Последнее изменение заменяет ожидающие параметры; ползунки не ждут GPU. Рабочий размер и стиль требуют пересоздания только NR, интенсивность — нет."; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aafc1"; font.pixelSize: 12 }
+                    GroupBox {
+                        id: nrGroup
+                        objectName: "nrModelGroup"
+                        title: "Параметры модели NR · во время стрима"
+                        function applyNR() { nrSaved.text=Chiaki.window.nvidia.saveNeuralConfiguration(nrScale.value,nrPasses.currentIndex+1,nrStyle.currentIndex,nrIntensity.value,nrBefore.checked)?"Последние параметры сохранены; ожидающие заменены.":"Не удалось сохранить INI."; }
+                        Timer { id: nrApplyDelay; interval: 300; onTriggered: nrGroup.applyNR() }
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.maximumWidth: videoControls.availableWidth
+                        ColumnLayout {
+                            width: Math.max(0,nrGroup.availableWidth)
+                            Label { text: "Рабочее разрешение: " + Math.round(nrScale.value*100) + "%" }
+                            Slider { id: nrScale; from: .25; to: 1; stepSize: .025; value: Number(Chiaki.window.nvidia.neuralConfiguration.scale); onMoved: nrApplyDelay.restart(); onPressedChanged: if(!pressed) { nrApplyDelay.stop(); nrGroup.applyNR(); } Layout.fillWidth: true }
+                            ComboBox { id: nrPasses; model: ["Один проход", "Два прохода"]; currentIndex: Number(Chiaki.window.nvidia.neuralConfiguration.passes)-1; onActivated: nrGroup.applyNR(); Layout.fillWidth: true }
+                            ComboBox { id: nrStyle; model: ["Стандартный", "Естественный", "Кинематографический"]; currentIndex: Number(Chiaki.window.nvidia.neuralConfiguration.style); onActivated: nrGroup.applyNR(); Layout.fillWidth: true }
+                            Label { text: "Интенсивность эффекта: " + nrIntensity.value.toFixed(2) }
+                            Slider { id: nrIntensity; from: 0; to: 2; stepSize: .1; value: Number(Chiaki.window.nvidia.neuralConfiguration.intensity); onMoved: nrApplyDelay.restart(); onPressedChanged: if(!pressed) { nrApplyDelay.stop(); nrGroup.applyNR(); } Layout.fillWidth: true }
+                            Switch { id: nrBefore; objectName: "nrBeforeSwitch"; Layout.fillWidth: true; Layout.minimumWidth: 0; contentItem: Text { text: nrBefore.text; color: "#eff8ff"; leftPadding: nrBefore.indicator.width + nrBefore.spacing; verticalAlignment: Text.AlignVCenter; wrapMode: Text.WordWrap } text: "Обрабатывать NR до апскейлера"; checked: Boolean(Chiaki.window.nvidia.neuralConfiguration.before); onToggled: nrGroup.applyNR() }
+                            Button { text: "Применить параметры NR"; Layout.fillWidth: true; onClicked: nrGroup.applyNR() }
+                            Label { id: nrSaved; text: "Рабочий масштаб меняет только размер обработки NR. Детали исходного потока не заменяются уменьшенной картинкой."; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12; color: "#9aafc1" }
+                        }
+                    }
+                    Label { visible: !Chiaki.window.nvidia.enabled || Chiaki.window.upscalingMode===6 || Chiaki.window.upscalingMode===8; text: "Резкость AMD RCAS: " + Math.round(Chiaki.window.videoSharpness*100) + "%" }
+                    Slider { visible: !Chiaki.window.nvidia.enabled || Chiaki.window.upscalingMode===6 || Chiaki.window.upscalingMode===8; from: 0; to: 1; stepSize: .05; value: Chiaki.window.videoSharpness; onMoved: Chiaki.window.videoSharpness=value; Layout.fillWidth: true }
+                    Label { visible: !Chiaki.window.nvidia.enabled || Chiaki.window.upscalingMode===6 || Chiaki.window.upscalingMode===8; text: "RCAS после масштабирования, до поправки NR. Изменения применяются к текущему кадру."; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12; color: "#9aafc1" }
+                    Label { visible: Chiaki.window.nvidia.neural; text: "Интенсивность регулирует силу поправки NR: 1 — обычная, 2 — усиленная. Это настройка наложения результата, а не гарантированно поддерживаемый библиотекой параметр модели."; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12; color: "#9aafc1" }
+                    Label { text: "Генерация кадров"; font.bold: true }
+                    ComboBox { model: ["Выключено · минимальная задержка", "Видео · Optical Flow · 2× (экспериментально)"]; currentIndex: Chiaki.window.nvidia.frameGeneration?1:0; onActivated: index => Chiaki.window.nvidia.frameGeneration=index===1; Layout.fillWidth: true }
+                    Label { text: Chiaki.window.nvidia.frameGenerationStatus; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#81d8ff" }
+                    Label { text: "NVIDIA MFG / SM86 пока не подключён к выводу Chiaki. Интерполяция видео ожидает текущий кадр и сдвигает показ исходного примерно на пол-интервала; 2× не ускоряет ввод PS5."; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aafc1"; font.pixelSize: 12 }
+                    Label { text: Chiaki.window.nvidia.status; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Label { text: "Последняя обработка GPU + ожидание: " + Chiaki.window.nvidia.milliseconds.toFixed(2) + " мс" }
+                    Label { text: {const t=Chiaki.window.nvidia.gpuTimings;return "GPU: масштабирование " + Number(t.sr||0).toFixed(2) + " · NR " + Number(t.nr||0).toFixed(2) + " · FG " + Number(t.fg||0).toFixed(2) + " · резкость " + Number(t.sharpness||0).toFixed(2) + " мс";} wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12; color: "#81d8ff" }
+                    Label { visible: Chiaki.window.nvidia.frameGeneration; text: "Пауза между фазами уменьшается при тяжёлой обработке NR. Если обработка медленнее потока, используются свежие кадры; 120 FPS не гарантированы."; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 12; color: "#ffc379" }
+                    Label { visible: Chiaki.window.nvidia.milliseconds>16.67; text: "Обработка превышает бюджет 60 FPS (16,7 мс). Уменьшите рабочий размер/число проходов NR или его отключите. Смешивание уменьшает эффект, но не время модели."; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#ffc379"; font.pixelSize: 12 }
+                    Label { text: "Интерполяция по движению в самом видео. При неоднозначном движении сохраняется исходная картинка. Счётчики фаз не являются FPS монитора; возможны ошибки на сложном движении."; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#9aafc1"; font.pixelSize: 12 }
+                }
+            }
+            Button { text: "Закрыть · Insert"; Layout.fillWidth: true; onClicked: nvidiaMenu.close() }
+        }
+    }
+    Connections { target: root; function onWidthChanged(){nvidiaMenu.constrain();} function onHeightChanged(){nvidiaMenu.constrain();} }
+    Connections {
+        target: Chiaki.window
+        function onNvidiaMenuRequested() {
+            console.debug("NVIDIA menu request, visible:", nvidiaMenu.visible);
+            nvidiaMenu.visible ? nvidiaMenu.close() : nvidiaMenu.open();
+        }
+    }
 
     function controllerButton(name) {
         let type = "deck";

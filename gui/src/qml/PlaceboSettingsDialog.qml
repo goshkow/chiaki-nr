@@ -194,8 +194,12 @@ DialogView {
                         Layout.preferredWidth: 400
                         firstInFocusChain: true
                         model: [qsTr("Custom"), qsTr("Nearest"), qsTr("Bilinear"), qsTr("Oversample"), qsTr("Bicubic"), qsTr("Gaussian"), qsTr("Catmull Rom"), qsTr("Lanczos"), qsTr("EwaLanczos"), qsTr("EwaLanczosSharp"), qsTr("EwaLanczosSharpest"), qsTr("FSR"), qsTr("FSRCNNX x2 8-0-4-1"), qsTr("FSRCNNX x2 16-0-4-1")]
-                        currentIndex: Chiaki.settings.placeboUpscaler
-                        onActivated: index => Chiaki.settings.placeboUpscaler = index
+                        currentIndex: Chiaki.window.upscalingMode===1?12:Chiaki.window.upscalingMode===2?13:Chiaki.window.nvidia.enabled?(Chiaki.window.nvidia.neural?15:14):Chiaki.settings.placeboUpscaler
+                        Component.onCompleted: model = model.concat(["NVIDIA DLSS", "NVIDIA DLSS + DLSS 5 Neural Rendering"])
+                        onActivated: index => {
+                            Chiaki.window.upscalingMode=index===14?3:index===15?4:index===13?2:(index===11||index===12)?1:0;
+                            if(index<14)Chiaki.settings.placeboUpscaler=index;
+                        }
                     }
 
                     Label {

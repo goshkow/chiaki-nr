@@ -48,6 +48,7 @@ extern "C" {
 #include <QQuickRenderControl>
 #include <QQuickGraphicsDevice>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QWaitCondition>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -2669,9 +2670,12 @@ QmlMainWindow::~QmlMainWindow()
     pl_cache_destroy(&placebo_cache);
     pl_queue_destroy(&placebo_queue);
     pl_renderer_destroy(&placebo_renderer);
+    nvidia_processor.shutdown();
     if (render_backend == RenderBackend::Vulkan) {
-        pl_vulkan_destroy(&placebo_vulkan);
-        pl_vk_inst_destroy(&placebo_vk_inst);
+        if (!nvidia_processor.retainsDeviceUntilExit()) {
+            pl_vulkan_destroy(&placebo_vulkan);
+            pl_vk_inst_destroy(&placebo_vk_inst);
+        }
     } else {
         pl_opengl_destroy(&placebo_opengl);
     }
@@ -2679,6 +2683,7 @@ QmlMainWindow::~QmlMainWindow()
     delete qt_gl_offscreen_surface;
     delete qt_gl_context;
     pl_options_free(&renderparams_opts);
+    pl_mpv_user_shader_destroy(&sharpness_hook);active_sharpness=-1;
     pl_mpv_user_shader_destroy(&fsr_hook);
     pl_mpv_user_shader_destroy(&fsrcnnx_hook_8);
     pl_mpv_user_shader_destroy(&fsrcnnx_hook_16);
@@ -2856,8 +2861,34 @@ QmlMainWindow::VideoPreset QmlMainWindow::videoPreset() const
     return video_preset;
 }
 
+double QmlMainWindow::videoSharpness() const{return video_sharpness.loadRelaxed()/100.;}
+void QmlMainWindow::setVideoSharpness(double value){video_sharpness.storeRelaxed(qBound(0,qRound(value*100),100));QSettings().setValue("video/sharpness",video_sharpness.loadRelaxed());emit videoSharpnessChanged();requestOverlayUpdate();}
+int QmlMainWindow::upscalingMode() const
+{
+    return spatial_upscaling_mode.loadRelaxed();
+}
+
+void QmlMainWindow::setUpscalingMode(int mode)
+{
+    // Removed temporal upscaler choices migrate to Advanced Spatial.
+    if(mode<0||mode>2)mode=2;
+    spatial_upscaling_mode.storeRelaxed(mode);
+    nvidia_processor.setHybrid(false);
+    nvidia_processor.setFsr(false);
+    nvidia_processor.setEnabled(false);
+    QSettings().setValue("video/upscaling",mode);
+    emit upscalingModeChanged();
+    requestOverlayUpdate();
+}
+
 void QmlMainWindow::setVideoPreset(VideoPreset preset)
 {
+    // Old combined presets migrate to a base preset plus independent scaling.
+    if(preset==VideoPreset::HighQualitySpatial||preset==VideoPreset::HighQualityAdvancedSpatial){
+        spatial_upscaling_mode.storeRelaxed(preset==VideoPreset::HighQualitySpatial?1:2);
+        preset=VideoPreset::HighQuality;
+        emit upscalingModeChanged();
+    }
     video_preset = preset;
     schedule_frame_mixer_active.storeRelaxed(configuredFrameMixerEnabledForScheduling() ? 1 : 0);
     emit videoPresetChanged();
@@ -2914,6 +2945,88 @@ void QmlMainWindow::show()
             showMaximized();
         setWindowAdjustable(true);
     }
+}
+
+bool QmlMainWindow::validateQml()
+{
+    QQmlComponent component(qml_engine, QUrl(QStringLiteral("qrc:/Main.qml")));
+    if (!component.isReady()) { qCritical() << component.errors(); return false; }
+    QVariantMap props;
+    props[QStringLiteral("parent")] = QVariant::fromValue(quick_window->contentItem());
+    quick_item = qobject_cast<QQuickItem*>(component.createWithInitialProperties(props));
+    if (!quick_item) { qCritical() << component.errors(); return false; }
+    quick_item->setWidth(1280);quick_item->setHeight(720);
+    QObject *menu=quick_item->findChild<QObject*>(QStringLiteral("nvidiaMenu"));
+    if(!menu)return false;
+    // Invisible windows do not advance frame-driven popup transitions.
+    // Disable animations only in this self-check, preserving normal UI motion.
+    QJSValue wrapped=qml_engine->newQObject(menu);
+    wrapped.setProperty("enter",QJSValue(QJSValue::NullValue));
+    wrapped.setProperty("exit",QJSValue(QJSValue::NullValue));
+    QKeyEvent insert(QEvent::KeyPress,Qt::Key_Insert,Qt::NoModifier);
+    const bool handled=handleShortcut(&insert);
+    QCoreApplication::processEvents();
+    const bool opened=menu->property("opened").toBool()||menu->property("visible").toBool();
+    handleShortcut(&insert);
+    QCoreApplication::processEvents();
+    const bool closed=!menu->property("visible").toBool();
+    qInfo()<<"Invisible NVIDIA popup Insert open/close:"<<opened<<closed;
+    quick_window->resize(1280,720);
+    handleShortcut(&insert);QCoreApplication::processEvents();quick_render->polishItems();
+    QObject *scroll=quick_item->findChild<QObject*>(QStringLiteral("videoControls"));
+    QObject *flick=scroll?qml_engine->newQObject(scroll).property("contentItem").toQObject():nullptr;
+    auto *viewport=qobject_cast<QQuickItem*>(flick);
+    double initialY=flick?flick->property("contentY").toDouble():0;
+    QPointF wheelPosition=viewport?viewport->mapToScene(QPointF(16,40)):QPointF(80,200);
+    QWheelEvent wheel(wheelPosition,wheelPosition,QPoint(),QPoint(0,-120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+    event(&wheel);
+    QElapsedTimer wheelTime;wheelTime.start();while(wheelTime.elapsed()<350){QCoreApplication::processEvents();QThread::msleep(10);}
+    bool wheelOk=flick&&flick->property("contentY").toDouble()>initialY;
+    qInfo()<<"Physical wheel forwarded to Insert ScrollView:"<<wheelOk<<"contentY"<<(flick?flick->property("contentY"):QVariant());
+    handleShortcut(&insert);QCoreApplication::processEvents();
+    if(!QMetaObject::invokeMethod(quick_item,"showSettingsDialog",Qt::DirectConnection))return false;
+    QCoreApplication::processEvents();
+    QObject *presetControl=quick_item->findChild<QObject*>(QStringLiteral("renderPresetSelector"));
+    QObject *scalingControl=quick_item->findChild<QObject*>(QStringLiteral("upscalingSelector"));
+    bool selectorsOk=presetControl&&scalingControl&&presetControl->property("count").toInt()==4&&scalingControl->property("count").toInt()==3;
+    QSettings stored;
+    const bool hadMode=stored.contains("video/upscaling");
+    const QVariant savedMode=stored.value("video/upscaling");
+    const int originalMode=upscalingMode();const VideoPreset originalPreset=videoPreset();
+    bool combinationsOk=true;
+    for(VideoPreset base:{VideoPreset::Fast,VideoPreset::Default,VideoPreset::HighQuality,VideoPreset::Custom}){
+        const int index=base==VideoPreset::Custom?3:int(base);
+        if(!presetControl||!QMetaObject::invokeMethod(presetControl,"activated",Qt::DirectConnection,Q_ARG(int,index))){combinationsOk=false;break;}
+        for(int mode:{0,1,2}){
+            if(!scalingControl||!QMetaObject::invokeMethod(scalingControl,"activated",Qt::DirectConnection,Q_ARG(int,mode))){combinationsOk=false;break;}
+            combinationsOk=combinationsOk&&videoPreset()==base&&upscalingMode()==mode;
+            for(bool nr:{false,true}){
+                nvidia_processor.setNeural(nr);
+                combinationsOk=combinationsOk&&upscalingMode()==mode&&!nvidia_processor.enabled()&&nvidia_processor.neural()==(nr&&nvidia_processor.neuralAvailable());
+            }
+            combinationsOk=combinationsOk&&presetControl->property("currentIndex").toInt()==(base==VideoPreset::Custom?3:int(base))&&scalingControl->property("currentIndex").toInt()==mode;
+        }
+    }
+    setVideoPreset(originalPreset);setUpscalingMode(originalMode);
+    if(hadMode)stored.setValue("video/upscaling",savedMode);else stored.remove("video/upscaling");
+    QFile iniFile(QCoreApplication::applicationDirPath()+"/OptiScaler.ini");QByteArray originalIni;
+    if(iniFile.open(QIODevice::ReadOnly)){originalIni=iniFile.readAll();iniFile.close();}
+    bool iniOk=!originalIni.isEmpty()&&nvidia_processor.saveNeuralConfiguration(.45,2,2,.8,true);
+    auto nr=nvidia_processor.neuralConfiguration();
+    iniOk=iniOk&&qAbs(nr.value("scale").toDouble()-.45)<.001&&nr.value("passes").toInt()==2&&nr.value("style").toInt()==2&&nr.value("before").toBool();
+    QByteArray editedIni;if(iniFile.open(QIODevice::ReadOnly)){editedIni=iniFile.readAll();iniFile.close();}
+    iniOk=iniOk&&editedIni.count("[DlssNr]")==originalIni.count("[DlssNr]")&&(!originalIni.contains("[ProcessFilter]")||editedIni.contains("[ProcessFilter]"));
+    if(!originalIni.isEmpty()&&iniFile.open(QIODevice::WriteOnly)){iniFile.write(originalIni);iniFile.close();}else iniOk=false;
+    menu->setProperty("x",-100);menu->setProperty("y",100000);
+    QMetaObject::invokeMethod(menu,"constrain",Qt::DirectConnection);
+    bool boundsOk=menu->property("x").toDouble()>=0&&menu->property("y").toDouble()+menu->property("height").toDouble()<=quick_item->height();
+    QObject *nrGroup=quick_item->findChild<QObject*>(QStringLiteral("nrModelGroup"));
+    QObject *nrSwitch=quick_item->findChild<QObject*>(QStringLiteral("nrBeforeSwitch"));
+    bool nrWidthOk=nrGroup&&nrSwitch&&nrGroup->property("width").toDouble()<=menu->property("width").toDouble()&&nrSwitch->property("width").toDouble()<=nrGroup->property("width").toDouble()&&nrSwitch->property("text").toString()==QStringLiteral("Обрабатывать NR до апскейлера");
+    qInfo()<<"NR controls fit panel:"<<nrWidthOk;
+    qInfo()<<"NR INI preservation:"<<iniOk<<"Popup bounds:"<<boundsOk;
+    qInfo()<<"Separate render/upscaling selectors:"<<selectorsOk<<"24 independent NR combinations:"<<combinationsOk;
+    return handled&&opened&&closed&&wheelOk&&selectorsOk&&combinationsOk&&iniOk&&boundsOk&&nrWidthOk;
 }
 
 namespace {
@@ -3007,6 +3120,8 @@ void QmlMainWindow::presentFrame(ChiakiFfmpegFrame frame, int32_t frames_lost, q
 
     if (!frame.frame)
         return;
+
+    nvidia_processor.noteInputFrame();
 
     if (bypass_frame_queue) {
         {
@@ -4965,6 +5080,7 @@ void QmlMainWindow::init(Settings *settings, bool exit_app_on_stream_exit)
             VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
             VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
             VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
+            "VK_NVX_binary_import", "VK_NVX_image_view_handle", "VK_KHR_push_descriptor", "VK_KHR_buffer_device_address", "VK_KHR_external_memory_win32", "VK_KHR_external_semaphore_win32",
         };
 
         struct pl_vulkan_params vulkan_params = {
@@ -4974,7 +5090,7 @@ void QmlMainWindow::init(Settings *settings, bool exit_app_on_stream_exit)
             PL_VULKAN_DEFAULTS
             .extra_queues = VK_QUEUE_VIDEO_DECODE_BIT_KHR,
             .opt_extensions = opt_dev_extensions,
-            .num_opt_extensions = 4,
+            .num_opt_extensions = 10,
         };
         placebo_vulkan = pl_vulkan_create(placebo_log, &vulkan_params);
         if (!placebo_vulkan) {
@@ -5282,6 +5398,16 @@ renderer_backend_ready:
         setVideoPreset(VideoPreset::HighQuality);
         break;
     }
+    connect(&nvidia_processor,&NvidiaVideo::changed,this,[this]{
+        QSettings scaling;
+        const int mode=upscalingMode();
+        if(!scaling.contains("video/upscaling")||scaling.value("video/upscaling").toInt()!=mode)
+            scaling.setValue("video/upscaling",mode);
+        emit upscalingModeChanged();
+    });
+    QSettings scalingSettings;
+    video_sharpness.storeRelaxed(scalingSettings.value("video/sharpness",100).toInt());
+    setUpscalingMode(scalingSettings.value("video/upscaling",2).toInt());
     setZoomFactor(settings->GetZoomFactor());
 }
 
@@ -7396,11 +7522,23 @@ void QmlMainWindow::render()
         const float dst_height = fabsf(pl_rect_h(target_frame.crop));
         if (src_width > 0.0f && src_height > 0.0f) {
             const float upscale_factor = qMin(dst_width / src_width, dst_height / src_height);
-            fsrcnnx_hook = select_spatial_hook(video_preset, configured_upscaler, upscale_factor,
-                                               fsr_hook, fsrcnnx_hook_8, fsrcnnx_hook_16);
+            // Scaling is independent of the base render-quality preset.
+            // SR and spatial scaling are exclusive; NR may precede spatial scaling.
+            const int method=upscalingMode();
+            if(method==1||method==2||method==6||method==8)
+                fsrcnnx_hook=select_spatial_hook(method==1?VideoPreset::HighQualitySpatial:VideoPreset::HighQualityAdvancedSpatial,
+                    configured_upscaler,upscale_factor,fsr_hook,fsrcnnx_hook_8,fsrcnnx_hook_16);
         }
     }
-    const struct pl_hook *active_hooks[] = {fsrcnnx_hook};
+    int sharpness=video_sharpness.loadRelaxed();
+    if(sharpness!=active_sharpness){
+        pl_mpv_user_shader_destroy(&sharpness_hook);active_sharpness=sharpness;
+        if(sharpness>0){
+            QByteArray shader=NvidiaVideo::sharpeningShader(sharpness/100.);
+            sharpness_hook=pl_mpv_user_shader_parse(placeboGpu(),shader.constData(),shader.size());
+        }
+    }
+    const struct pl_hook *active_hooks[] = {fsrcnnx_hook,sharpness_hook};
     if (fsrcnnx_hook) {
         params.hooks = active_hooks;
         params.num_hooks = 1;
@@ -7437,6 +7575,12 @@ void QmlMainWindow::render()
             break;
         }
     }
+
+    const struct pl_hook *video_spatial_hook=fsrcnnx_hook;
+    const struct pl_hook *combined_hooks[2];int hook_count=0;
+    if(fsrcnnx_hook)combined_hooks[hook_count++]=fsrcnnx_hook;
+    if(sharpness_hook)combined_hooks[hook_count++]=sharpness_hook;
+    params.hooks=hook_count?combined_hooks:nullptr;params.num_hooks=hook_count;
 
     for (int i = 0; i < frame_mix.num_frames; i++) {
         const struct pl_frame *mix_frame = frame_mix.frames[i];
@@ -7475,9 +7619,17 @@ void QmlMainWindow::render()
         logLatencyStats("render_prep", render_call_begin_us - render_entry_us_local);
     if (render_call_begin_us >= render_setup_begin_us)
         logRenderSetupStats(render_call_begin_us, render_call_begin_us - render_setup_begin_us);
-    if (!(bypass_frame_queue
+    pl_render_params nvidia_params=params;
+    const struct pl_hook *final_hooks[2];int final_count=0;
+    // All enhanced outputs are already at viewport resolution.
+    // The NVIDIA path sharpens its full-resolution base before NR, once.
+    nvidia_params.hooks=final_count?final_hooks:nullptr;nvidia_params.num_hooks=final_count;
+    const bool used_nvidia=nvidia_processor.render(placebo_vulkan, placebo_renderer,
+          bypass_frame_queue ? &direct_render_frame : nullptr,
+          bypass_frame_queue ? nullptr : &frame_mix, &target_frame, &nvidia_params, video_spatial_hook, sharpness/100.f);
+    if (!(used_nvidia || (bypass_frame_queue
         ? pl_render_image(placebo_renderer, &direct_render_frame, &target_frame, &params)
-        : pl_render_image_mix(placebo_renderer, &frame_mix, &target_frame, &params)))
+        : pl_render_image_mix(placebo_renderer, &frame_mix, &target_frame, &params))))
     {
         qCWarning(chiakiGui) << "Failed to render Placebo frame!";
         close_started_frame(false);
@@ -7485,6 +7637,7 @@ void QmlMainWindow::render()
         schedulePostSwapchainRecreateRefresh();
         return;
     }
+    if(used_nvidia){const int phase_delay=nvidia_processor.nextPhaseDelayMs();if(phase_delay>0)QMetaObject::invokeMethod(this,[this,phase_delay]{QTimer::singleShot(phase_delay,this,[this]{requestOverlayUpdate();});},Qt::QueuedConnection);}
     {
         const qint64 render_after_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
         if (render_after_us >= render_call_begin_us) {
@@ -7510,6 +7663,10 @@ void QmlMainWindow::render()
 
 bool QmlMainWindow::handleShortcut(QKeyEvent *event)
 {
+    if (event->key() == Qt::Key_Insert) {
+        if (!event->isAutoRepeat()) emit nvidiaMenuRequested();
+        return true;
+    }
     if (event->modifiers() == Qt::NoModifier) {
         switch (event->key()) {
         case Qt::Key_F11:
@@ -7565,6 +7722,16 @@ bool QmlMainWindow::nvidiaCard() const
 bool QmlMainWindow::event(QEvent *event)
 {
     switch (event->type()) {
+    case QEvent::Wheel:
+        // The visible window is separate from the offscreen Qt Quick window.
+        // Forward wheel events just like mouse events, otherwise ScrollView
+        // never sees a physical mouse wheel during streaming.
+        if (!session || grab_input) {
+            QGuiApplication::sendEvent(quick_window, event);
+            requestOverlayUpdate();
+            return true;
+        }
+        break;
     case QEvent::MouseMove:
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonRelease:
@@ -7595,6 +7762,8 @@ bool QmlMainWindow::event(QEvent *event)
         if (handleShortcut(static_cast<QKeyEvent*>(event)))
             return true;
     case QEvent::KeyRelease:
+        if (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Insert)
+            return true;
         if (session && !grab_input) {
             QKeyEvent *e = static_cast<QKeyEvent*>(event);
             if (!e->spontaneous()) {

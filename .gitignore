@@ -39,3 +39,14 @@ chiaki.conf
 .cache/
 *.vscode
 site/
+
+# приватные настройки и результаты упаковки
+/dist/
+/config/
+/portable.txt
+/OptiScaler.ini
+/nvngx_*.dll
+/amd_fidelityfx_vk.dll
+*-report.json
+*.log
+!BUILD-NR.md

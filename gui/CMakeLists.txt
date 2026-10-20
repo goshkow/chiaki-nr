@@ -20,6 +20,8 @@ if(WIN32)
 endif()
 
 set(SOURCE_FILES
+	include/nvidiavideo.h
+	src/nvidiavideo.cpp
 	include/exception.h
 	src/main.cpp
 	include/discoverymanager.h
@@ -92,7 +94,9 @@ add_executable(chiaki WIN32
 		${RESOURCE_FILES}
 		${SOURCE_FILES}
 )
-target_include_directories(chiaki PRIVATE include)
+target_include_directories(chiaki PRIVATE include "${CMAKE_SOURCE_DIR}/third-party/nr-sdk/fidelityfx/include")
+target_include_directories(chiaki PRIVATE "${CMAKE_SOURCE_DIR}/third-party/nr-sdk/dlss/include")
+target_link_libraries(chiaki vulkan-1 shaderc_shared)
 
 add_library(placebo-libav-impl src/libav_impl.c)
 target_link_libraries(placebo-libav-impl PkgConfig::LIBPLACEBO FFMPEG::avcodec FFMPEG::avutil FFMPEG::avformat)
@@ -159,3 +163,12 @@ install(TARGETS chiaki
 install(FILES chiaking.desktop DESTINATION share/applications)
 install(FILES chiaking.png DESTINATION share/icons/hicolor/512x512/apps)
 install(FILES io.github.streetpea.Chiaki4deck.appdata.xml DESTINATION share/metainfo)
+
+# Native NR caller shim, based on the OptiScaler DLSSNR fork's forwarder.
+add_library(chiaki_nr_forwarder SHARED src/dlssnr_forwarder.cpp)
+set_target_properties(chiaki_nr_forwarder PROPERTIES OUTPUT_NAME chiaki_nvngx PREFIX "")
+if(MINGW)
+ target_compile_options(chiaki_nr_forwarder PRIVATE -fno-optimize-sibling-calls)
+ target_link_options(chiaki_nr_forwarder PRIVATE -static-libgcc -static-libstdc++)
+endif()
+add_dependencies(chiaki chiaki_nr_forwarder)

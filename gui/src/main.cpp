@@ -20,6 +20,9 @@ int main(int argc, char *argv[]) { return real_main(argc, argv); }
 #include <discoverymanager.h>
 #include <qmlmainwindow.h>
 #include <QApplication>
+#include <QSettings>
+#include <QDir>
+#include "nvidiavideo.h"
 #include <QtTypes>
 
 #ifdef CHIAKI_ENABLE_CLI
@@ -76,7 +79,7 @@ int real_main(int argc, char *argv[])
 	QGuiApplication::setOrganizationName("Chiaki");
 	QGuiApplication::setApplicationName("Chiaki");
 	QGuiApplication::setApplicationVersion(CHIAKI_VERSION);
-	QGuiApplication::setApplicationDisplayName("chiaki-ng");
+	QGuiApplication::setApplicationDisplayName("Chiaki NR");
 #if defined(Q_OS_MACOS)
 	qputenv("QT_MTL_NO_TRANSACTION", "1");
 #endif
@@ -111,7 +114,7 @@ int real_main(int argc, char *argv[])
 		return 1;
 	}
 
-    SDL_SetHint(SDL_HINT_APP_NAME, "chiaki-ng");
+    SDL_SetHint(SDL_HINT_APP_NAME, "Chiaki NR");
 
 	if(SDL_Init(SDL_INIT_AUDIO) < 0)
 	{
@@ -124,6 +127,42 @@ int real_main(int argc, char *argv[])
 	QtWebEngineQuick::initialize();
 #endif
 	QApplication app(argc, argv);
+    // portable не читает подключения из установленного Chiaki.
+    if(QFileInfo::exists(QCoreApplication::applicationDirPath()+"/portable.txt")){
+        const QString path=QCoreApplication::applicationDirPath()+"/config";
+        if(!QDir().mkpath(path)){fprintf(stderr,"Не удалось создать каталог настроек portable.\n");return 1;}
+        QCoreApplication::setOrganizationName("ChiakiNR");
+        QCoreApplication::setApplicationName("ChiakiNR");
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,path);
+        QSettings::setPath(QSettings::IniFormat,QSettings::SystemScope,path+"/defaults");
+    }
+    if(app.arguments().contains("--portable-check")){
+        QSettings settings;settings.setValue("portable/check",true);settings.sync();
+        fprintf(stdout,"%s\n",settings.fileName().toUtf8().constData());
+        return settings.format()==QSettings::IniFormat&&settings.status()==QSettings::NoError?0:2;
+    }
+    if(app.arguments().contains("--nr-capabilities")){
+        NvidiaVideo video;
+        fprintf(stdout,"NR available: %s\n%s\n",video.neuralAvailable()?"true":"false",video.neuralAvailabilityReason().toUtf8().constData());
+        return 0;
+    }
+
+	if (app.arguments().contains("--nvidia-qml-check")) {
+		QGuiApplication::setOrganizationName("Chiaki-NVIDIA-Test");
+		qInstallMessageHandler([](QtMsgType,const QMessageLogContext&,const QString &s){fprintf(stderr,"%s\n",s.toUtf8().constData());fflush(stderr);});
+		Settings settings(QString{});
+		QmlMainWindow window(&settings);
+		bool ok=window.validateQml();
+		fprintf(stderr,"QML NVIDIA menu: %s\n",ok?"PASS":"FAIL");
+		return ok?0:2;
+	}
+	if (app.arguments().contains("--nvidia-self-test")) {
+        QCoreApplication::setOrganizationName("Chiaki-NVIDIA-Test");
+		int index=app.arguments().indexOf("--nvidia-self-test");
+		QString report=index+1<app.arguments().size()?app.arguments()[index+1]:"nvidia-test.json";
+		return NvidiaVideo::selfTest(report)?0:2;
+	}
 
 #ifdef Q_OS_MACOS
 	QGuiApplication::setWindowIcon(QIcon(":/icons/chiaking_macos.svg"));
@@ -183,7 +222,7 @@ int real_main(int argc, char *argv[])
 		settings.SetCurrentProfile(parser.value(profile_option));
 	Settings alt_settings(parser.isSet(profile_option) ? "" : settings.GetCurrentProfile());
 	if(!settings.GetCurrentProfile().isEmpty())
-		QGuiApplication::setApplicationDisplayName(QString("chiaki-ng:%1").arg(settings.GetCurrentProfile()));
+		QGuiApplication::setApplicationDisplayName(QString("Chiaki NR:%1").arg(settings.GetCurrentProfile()));
 	bool use_alt_settings = false;
 	if(!parser.isSet(profile_option))
 		use_alt_settings = true;

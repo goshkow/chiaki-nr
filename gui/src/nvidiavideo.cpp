@@ -18,8 +18,7 @@
 #include <softpub.h>
 #include <wincrypt.h>
 #include <shaderc/shaderc.hpp>
-#include <nvsdk_ngx_vk.h>
-#include <nvsdk_ngx_helpers_vk.h>
+#include "ngx_abi.h"
 #include <algorithm>
 #include <array>
 #include <vector>
@@ -315,7 +314,7 @@ struct NvidiaVideo::Impl {
     NVSDK_NGX_Resource_VK resource(int i) {
         VkFormat format;VkImage image=pl_vulkan_unwrap(vk->gpu,textures[i],&format,nullptr);
         VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
-        return NVSDK_NGX_Create_ImageView_Resource_VK(views[i],image,range,format,textures[i]->params.w,textures[i]->params.h,i==4||i>=7);
+        NVSDK_NGX_Resource_VK result{};auto &view=result.Resource.ImageViewInfo;view.ImageView=views[i];view.Image=image;view.SubresourceRange=range;view.Format=format;view.Width=textures[i]->params.w;view.Height=textures[i]->params.h;result.Type=0;result.ReadWrite=i==4||i>=7;return result;
     }
     FfxApiResource ffxResource(int i) {
         VkFormat fmt;VkImage image=pl_vulkan_unwrap(vk->gpu,textures[i],&fmt,nullptr);
@@ -630,7 +629,7 @@ void main(){ivec2 p=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(p,im
     }
 };
 
-NvidiaVideo::NvidiaVideo(QObject *parent):QObject(parent),d(new Impl){d->rtxCandidate=hasRtxVulkan();d->nrRuntimePresent=QFile::exists(QCoreApplication::applicationDirPath()+"/nvngx_dlssnr.dll");QSettings s;d->enabled=s.value("nvidia/sr",false).toBool();d->neural=d->rtxCandidate&&d->nrRuntimePresent&&s.value("nvidia/nr",false).toBool();d->quality=s.value("nvidia/quality",0).toInt();d->neuralBlend=s.value("nvidia/blend",1.).toFloat();d->fg=s.value("video/fg",false).toBool();d->renderPreset=s.value("nvidia/preset",0).toInt();auto config=neuralConfiguration();d->neuralBefore=config.value("before").toBool();d->nrScale=config.value("scale").toFloat();d->nrPasses=config.value("passes").toInt();d->nrStyle=config.value("style").toInt();d->nrIntensity=config.value("intensity").toFloat();d->nisSharpness=s.value("nvidia/nis_sharpness",.25).toFloat();
+NvidiaVideo::NvidiaVideo(QObject *parent):QObject(parent),d(new Impl){d->rtxCandidate=hasRtxVulkan();d->nrRuntimePresent=d->rtxCandidate&&trustedNrRuntime(QCoreApplication::applicationDirPath()+"/nvngx_dlssnr.dll");QSettings s;d->enabled=s.value("nvidia/sr",false).toBool();d->neural=d->rtxCandidate&&d->nrRuntimePresent&&s.value("nvidia/nr",false).toBool();d->quality=s.value("nvidia/quality",0).toInt();d->neuralBlend=s.value("nvidia/blend",1.).toFloat();d->fg=s.value("video/fg",false).toBool();d->renderPreset=s.value("nvidia/preset",0).toInt();auto config=neuralConfiguration();d->neuralBefore=config.value("before").toBool();d->nrScale=config.value("scale").toFloat();d->nrPasses=config.value("passes").toInt();d->nrStyle=config.value("style").toInt();d->nrIntensity=config.value("intensity").toFloat();d->nisSharpness=s.value("nvidia/nis_sharpness",.25).toFloat();
  d->finalSharp=0;d->uiFinalSharp=d->finalSharp;d->uiEnabled=d->enabled;d->uiNeural=d->neural;d->uiFg=d->fg;d->uiHybrid=d->hybrid;d->uiQuality=d->quality;d->uiPreset=d->renderPreset;d->uiBlend=d->neuralBlend;d->uiScale=d->nrScale;d->uiPasses=d->nrPasses;d->uiStyle=d->nrStyle;d->uiIntensity=d->nrIntensity;d->uiBefore=d->neuralBefore;d->uiNis=d->nisSharpness;}
 NvidiaVideo::~NvidiaVideo(){shutdown();}
 bool NvidiaVideo::fsr()const{QMutexLocker lock(&d->controlMutex);return d->uiFsr;}
@@ -639,7 +638,7 @@ double NvidiaVideo::finalSharpness()const{QMutexLocker lock(&d->controlMutex);re
 void NvidiaVideo::setFinalSharpness(double v){v=std::clamp(v,0.,1.);{QMutexLocker lock(&d->controlMutex);d->uiFinalSharp=float(v);d->controlDirty|=1024;}QSettings().setValue("video/final_sharpness",v);emit changed();}
 bool NvidiaVideo::enabled()const{QMutexLocker lock(&d->controlMutex);return d->uiEnabled;}
 bool NvidiaVideo::neuralAvailable()const{QMutexLocker lock(&d->controlMutex);return d->rtxCandidate&&d->nrRuntimePresent&&!d->nrRejected;}
-QString NvidiaVideo::neuralAvailabilityReason()const{QMutexLocker lock(&d->controlMutex);if(!d->rtxCandidate)return QStringLiteral("NR доступен только на совместимой NVIDIA RTX с Vulkan. Пространственные апскейлеры и RCAS остаются доступны.");if(!d->nrRuntimePresent)return QStringLiteral("Для NR добавьте совместимую nvngx_dlssnr.dll рядом с приложением и перезапустите его. Библиотека не входит в portable.");if(d->nrRejected)return QStringLiteral("Библиотека NR отклонена драйвером или выбранной видеокартой. Обычный стриминг сохранён.");return QStringLiteral("Найдены NVIDIA RTX и библиотека NR. Совместимость проверяется при первом включении; наличие RTX не гарантирует поддержку этой версии runtime.");}
+QString NvidiaVideo::neuralAvailabilityReason()const{QMutexLocker lock(&d->controlMutex);if(!d->rtxCandidate)return QStringLiteral("NR доступен только на совместимой NVIDIA RTX с Vulkan. Пространственные апскейлеры и RCAS остаются доступны.");if(!d->nrRuntimePresent)return QStringLiteral("Подтверждённая библиотека NR не найдена. Добавьте совместимую nvngx_dlssnr.dll рядом с приложением и перезапустите его. Библиотека не входит в portable.");if(d->nrRejected)return QStringLiteral("Библиотека NR отклонена драйвером или выбранной видеокартой. Обычный стриминг сохранён.");return QStringLiteral("Найдены NVIDIA RTX и библиотека NR. Совместимость проверяется при первом включении; наличие RTX не гарантирует поддержку этой версии runtime.");}
 bool NvidiaVideo::neural()const{QMutexLocker lock(&d->controlMutex);return d->uiNeural;}
 bool NvidiaVideo::hybrid()const{QMutexLocker lock(&d->controlMutex);return d->uiHybrid;}
 void NvidiaVideo::setHybrid(bool v){{QMutexLocker lock(&d->controlMutex);d->uiHybrid=v;d->controlDirty|=8;}emit changed();}

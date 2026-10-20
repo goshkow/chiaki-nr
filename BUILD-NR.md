@@ -1,6 +1,6 @@
 # Сборка Chiaki NR под Windows x64
 
-Нужны MSYS2 UCRT64, CMake/Ninja, GCC, Qt6 base/declarative/svg, FFmpeg, libplacebo >=7.349, SDL2, OpenSSL, opus, curl, protobuf/nanopb, speexdsp, shaderc и Vulkan. Точный список установки - .github/workflows/nr-portable.yml. Заголовки NVIDIA/AMD с лицензиями включены в third-party/nr-sdk; закрытые runtime не нужны для компиляции.
+Нужны MSYS2 UCRT64, CMake/Ninja, GCC, Qt6 base/declarative/svg, FFmpeg, libplacebo >=7.349, SDL2, OpenSSL, opus, curl, protobuf/nanopb, speexdsp, shaderc и Vulkan. Точный список установки - .github/workflows/nr-portable.yml. Заголовки AMD с MIT-лицензией включены в third-party/nr-sdk; для NGX используются собственные минимальные объявления ABI без SDK; закрытые runtime не нужны для компиляции.
 
 ```sh
 git clone --recursive git@github.com:goshkow/chiaki-nr.git
